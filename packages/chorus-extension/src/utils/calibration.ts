@@ -129,12 +129,16 @@ export function generateInsights(data: CalibrationDataPoint[]): string[] {
   const insights: string[] = [];
 
   if (data.length === 0) {
-    insights.push('No calibration data available. Submit ballots and tag outcomes to build your profile.');
+    insights.push(
+      'No calibration data available. Submit ballots and tag outcomes to build your profile.'
+    );
     return insights;
   }
 
   if (data.length < 5) {
-    insights.push(`Limited data (${data.length} predictions). Insights become more reliable after 10+ predictions.`);
+    insights.push(
+      `Limited data (${data.length} predictions). Insights become more reliable after 10+ predictions.`
+    );
   }
 
   const curve = getCalibrationCurve(data);
@@ -160,9 +164,13 @@ export function generateInsights(data: CalibrationDataPoint[]): string[] {
     if (Math.abs(diff) > 0.2 && point.count >= 3) {
       // significant deviation with enough data
       if (diff > 0.2) {
-        insights.push(`You tend to be underconfident at confidence level ${point.confidence}. Your actual accuracy (${Math.round(point.actualAccuracy * 100)}%) exceeds expectations.`);
+        insights.push(
+          `You tend to be underconfident at confidence level ${point.confidence}. Your actual accuracy (${Math.round(point.actualAccuracy * 100)}%) exceeds expectations.`
+        );
       } else if (diff < -0.2) {
-        insights.push(`You tend to be overconfident at confidence level ${point.confidence}. Your actual accuracy (${Math.round(point.actualAccuracy * 100)}%) is below expectations.`);
+        insights.push(
+          `You tend to be overconfident at confidence level ${point.confidence}. Your actual accuracy (${Math.round(point.actualAccuracy * 100)}%) is below expectations.`
+        );
       }
     }
   }
@@ -172,10 +180,13 @@ export function generateInsights(data: CalibrationDataPoint[]): string[] {
   if (highConfidence.length > 0) {
     const totalHighCount = highConfidence.reduce((sum, p) => sum + p.count, 0);
     if (totalHighCount > 0) {
-      const avgHighAccuracy = highConfidence.reduce((sum, p) => sum + p.actualAccuracy * p.count, 0) / totalHighCount;
+      const avgHighAccuracy =
+        highConfidence.reduce((sum, p) => sum + p.actualAccuracy * p.count, 0) / totalHighCount;
 
       if (avgHighAccuracy < 0.7) {
-        insights.push('Consider requesting pairing or additional review when confidence is below 4. High-confidence predictions should have >70% accuracy.');
+        insights.push(
+          'Consider requesting pairing or additional review when confidence is below 4. High-confidence predictions should have >70% accuracy.'
+        );
       }
     }
   }
@@ -185,15 +196,21 @@ export function generateInsights(data: CalibrationDataPoint[]): string[] {
   if (lowConfidence.length > 0) {
     const totalLowConf = lowConfidence.reduce((sum, p) => sum + p.count, 0);
     if (totalLowConf > data.length * 0.4) {
-      insights.push(`${Math.round((totalLowConf / data.length) * 100)}% of your predictions have low confidence (1-2). Consider building more context or deferring review.`);
+      insights.push(
+        `${Math.round((totalLowConf / data.length) * 100)}% of your predictions have low confidence (1-2). Consider building more context or deferring review.`
+      );
     }
   }
 
   // overall accuracy insight
   if (overallAccuracy > 0.75) {
-    insights.push(`Strong overall accuracy (${Math.round(overallAccuracy * 100)}%). Your reviews generally align with outcomes.`);
+    insights.push(
+      `Strong overall accuracy (${Math.round(overallAccuracy * 100)}%). Your reviews generally align with outcomes.`
+    );
   } else if (overallAccuracy < 0.5) {
-    insights.push(`Low overall accuracy (${Math.round(overallAccuracy * 100)}%). Review your decision criteria and seek feedback from teammates.`);
+    insights.push(
+      `Low overall accuracy (${Math.round(overallAccuracy * 100)}%). Review your decision criteria and seek feedback from teammates.`
+    );
   }
 
   return insights;

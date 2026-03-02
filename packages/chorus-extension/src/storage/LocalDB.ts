@@ -10,6 +10,13 @@ import {
   ReflectionAnalytics,
 } from '../types/reflection';
 import { NudgeResponses } from '../types/ballot';
+import {
+  ThrivingTemplate,
+  ThrivingChecklistItem,
+  ThrivingChecklistItemWithTemplate,
+  ThrivingChecklistFilters,
+  ChecklistScope,
+} from '../types/thriving';
 
 export interface ContextEntry {
   id?: number;
@@ -77,7 +84,18 @@ export interface CalibrationDataPoint {
   outcome_success: boolean; // true if decision aligned with outcome
 }
 
-export { EvidenceEntry, DecisionSchemeEntry, RetrospectiveEntry, RetrospectiveFilters, ReflectionAnalytics, NudgeResponses };
+export {
+  EvidenceEntry,
+  DecisionSchemeEntry,
+  RetrospectiveEntry,
+  RetrospectiveFilters,
+  ReflectionAnalytics,
+  NudgeResponses,
+  ThrivingTemplate,
+  ThrivingChecklistItem,
+  ThrivingChecklistItemWithTemplate,
+  ThrivingChecklistFilters,
+};
 
 export class LocalDB implements vscode.Disposable {
   private db: Database | null = null;
@@ -124,8 +142,7 @@ export class LocalDB implements vscode.Disposable {
         console.log(`LocalDB: Tables created successfully`);
       } catch (createError) {
         // if table creation fails on existing db, it's likely corrupted
-        if (dbLoaded && createError instanceof Error &&
-          createError.message.includes('malformed')) {
+        if (dbLoaded && createError instanceof Error && createError.message.includes('malformed')) {
           console.warn(`LocalDB: Database corrupted, recreating from scratch...`);
 
           // backup corrupted db
@@ -212,8 +229,9 @@ export class LocalDB implements vscode.Disposable {
     // migrate existing ballots table to add nudge_responses column
     // check if column exists first to avoid errors on repeated migrations
     try {
-      const tableInfo = this.db.exec("PRAGMA table_info(ballots)");
-      const hasNudgeColumn = tableInfo.length > 0 &&
+      const tableInfo = this.db.exec('PRAGMA table_info(ballots)');
+      const hasNudgeColumn =
+        tableInfo.length > 0 &&
         tableInfo[0].values.some((row: any[]) => row[1] === 'nudge_responses');
 
       if (!hasNudgeColumn) {
@@ -339,17 +357,65 @@ export class LocalDB implements vscode.Disposable {
 			)
 		`);
 
+    // thriving_templates table - stores LABS and TRACE checklist template definitions
+    // LABS (learning_culture, agency, belonging, self_efficacy) are per-PR items
+    // TRACE (transparent, rewards_growth, agency, consistent, explores_context) are team-wide items
+    this.db.run(`
+			CREATE TABLE IF NOT EXISTS thriving_templates (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				item_key TEXT NOT NULL UNIQUE,
+				label TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				dimension TEXT CHECK (dimension IN ('learning_culture','agency','belonging','self_efficacy')),
+				trace_principle TEXT CHECK (trace_principle IN ('transparent','rewards_growth','agency','consistent','explores_context')),
+				source TEXT NOT NULL CHECK (source IN ('manual','auto_detected')),
+				scope TEXT NOT NULL CHECK (scope IN ('pr','team')),
+				auto_detect_rule TEXT,
+				sort_order INTEGER NOT NULL DEFAULT 0
+			)
+		`);
+
+    // thriving_checklist table - per-PR instances of checklist items
+    // tracks checked state, auto-detection, and notes for each PR + template combination
+    this.db.run(`
+			CREATE TABLE IF NOT EXISTS thriving_checklist (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				pr_reference TEXT NOT NULL,
+				item_key TEXT NOT NULL,
+				checked INTEGER NOT NULL DEFAULT 0,
+				checked_at DATETIME,
+				auto_detected INTEGER NOT NULL DEFAULT 0,
+				notes TEXT NOT NULL DEFAULT '',
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(pr_reference, item_key)
+			)
+		`);
+
     // create indexes for better search performance
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_context_type ON context_entries(type)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_context_path ON context_entries(path)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_ballots_pr ON ballots(pr_reference)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_pr_state_phase ON pr_state(phase)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_pr ON evidence_entries(pr_reference)`);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_search_history_ts ON search_history(timestamp DESC)`);
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_search_history_ts ON search_history(timestamp DESC)`
+    );
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_pr_outcomes_pr ON pr_outcomes(pr_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_decision_schemes_pr ON decision_schemes(pr_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_retrospectives_pr ON retrospectives(pr_id)`);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_retrospectives_ts ON retrospectives(timestamp DESC)`);
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_retrospectives_ts ON retrospectives(timestamp DESC)`
+    );
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_thriving_checklist_pr ON thriving_checklist(pr_reference)`
+    );
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_thriving_templates_scope ON thriving_templates(scope)`
+    );
+
+    // seed default thriving templates
+    this.seedThrivingTemplates();
   }
 
   async addContextEntry(entry: Omit<ContextEntry, 'id' | 'indexed_at'>): Promise<number> {
@@ -523,6 +589,8 @@ export class LocalDB implements vscode.Disposable {
     this.db.run('DELETE FROM pr_outcomes');
     this.db.run('DELETE FROM decision_schemes');
     this.db.run('DELETE FROM retrospectives');
+    this.db.run('DELETE FROM thriving_checklist');
+    this.db.run('DELETE FROM thriving_templates');
 
     await this.persistToFile();
   }
@@ -842,12 +910,14 @@ export class LocalDB implements vscode.Disposable {
    * @param limit - Maximum number of PRs to return (default: 10)
    * @returns Promise resolving to array of recent PR summaries
    */
-  async getRecentPRs(limit: number = 10): Promise<Array<{
-    prReference: string;
-    phase: string | null;
-    ballotCount: number;
-    lastActivity: string;
-  }>> {
+  async getRecentPRs(limit: number = 10): Promise<
+    Array<{
+      prReference: string;
+      phase: string | null;
+      ballotCount: number;
+      lastActivity: string;
+    }>
+  > {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
@@ -1601,6 +1671,658 @@ export class LocalDB implements vscode.Disposable {
       bias_frequency: biasFrequency as any,
       insights: [], // insights will be generated by ReflectionService
     };
+  }
+
+  /**
+   * Seeds the default LABS and TRACE thriving checklist templates.
+   *
+   * Uses INSERT OR IGNORE to be idempotent - safe to call on every initialization.
+   * LABS items are per-PR checklist items organized by four dimensions.
+   * TRACE items are team-wide measurement health checks.
+   */
+  private seedThrivingTemplates(): void {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const templates: Array<{
+      item_key: string;
+      label: string;
+      description: string;
+      dimension: string | null;
+      trace_principle: string | null;
+      source: string;
+      scope: string;
+      auto_detect_rule: string | null;
+      sort_order: number;
+    }> = [
+      // LABS - Learning Culture
+      {
+        item_key: 'labs_lc_1',
+        label: 'I shared something I learned during this review',
+        description: '',
+        dimension: 'learning_culture',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 1,
+      },
+      {
+        item_key: 'labs_lc_2',
+        label: 'I asked a question to deepen my understanding',
+        description: '',
+        dimension: 'learning_culture',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 2,
+      },
+      {
+        item_key: 'labs_lc_3',
+        label: 'I documented a rationale or decision for future reference',
+        description: '',
+        dimension: 'learning_culture',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"scheme_recorded"}',
+        sort_order: 3,
+      },
+      {
+        item_key: 'labs_lc_4',
+        label: 'I noted a pattern worth discussing in retrospective',
+        description: '',
+        dimension: 'learning_culture',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"retrospective_recorded"}',
+        sort_order: 4,
+      },
+      // LABS - Agency
+      {
+        item_key: 'labs_ag_1',
+        label: 'I provided evidence supporting my review decision',
+        description: '',
+        dimension: 'agency',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"evidence_added"}',
+        sort_order: 1,
+      },
+      {
+        item_key: 'labs_ag_2',
+        label: 'I expressed a dissenting or alternative viewpoint',
+        description: '',
+        dimension: 'agency',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"nudge_responded"}',
+        sort_order: 2,
+      },
+      {
+        item_key: 'labs_ag_3',
+        label: 'I had meaningful influence on the outcome of this review',
+        description: '',
+        dimension: 'agency',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 3,
+      },
+      // LABS - Belonging
+      {
+        item_key: 'labs_be_1',
+        label: "I acknowledged a teammate's contribution or effort",
+        description: '',
+        dimension: 'belonging',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 1,
+      },
+      {
+        item_key: 'labs_be_2',
+        label: 'I felt comfortable raising concerns without judgment',
+        description: '',
+        dimension: 'belonging',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 2,
+      },
+      {
+        item_key: 'labs_be_3',
+        label: 'I gave feedback that was specific and constructive',
+        description: '',
+        dimension: 'belonging',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 3,
+      },
+      {
+        item_key: 'labs_be_4',
+        label: 'I checked if others felt heard before concluding',
+        description: '',
+        dimension: 'belonging',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 4,
+      },
+      // LABS - Self-Efficacy
+      {
+        item_key: 'labs_se_1',
+        label: 'I submitted a review ballot with a clear rationale',
+        description: '',
+        dimension: 'self_efficacy',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"ballot_submitted"}',
+        sort_order: 1,
+      },
+      {
+        item_key: 'labs_se_2',
+        label: 'I assessed risks and considered rollback plans',
+        description: '',
+        dimension: 'self_efficacy',
+        trace_principle: null,
+        source: 'auto_detected',
+        scope: 'pr',
+        auto_detect_rule: '{"type":"evidence_added"}',
+        sort_order: 2,
+      },
+      {
+        item_key: 'labs_se_3',
+        label: 'I persisted through uncertainty instead of deferring',
+        description: '',
+        dimension: 'self_efficacy',
+        trace_principle: null,
+        source: 'manual',
+        scope: 'pr',
+        auto_detect_rule: null,
+        sort_order: 3,
+      },
+      // TRACE - Team-wide items
+      {
+        item_key: 'trace_t_1',
+        label: 'Team members know what review data is tracked and how it is used',
+        description: '',
+        dimension: null,
+        trace_principle: 'transparent',
+        source: 'manual',
+        scope: 'team',
+        auto_detect_rule: null,
+        sort_order: 0,
+      },
+      {
+        item_key: 'trace_rg_1',
+        label: 'Our review metrics encourage learning, not punishment',
+        description: '',
+        dimension: null,
+        trace_principle: 'rewards_growth',
+        source: 'manual',
+        scope: 'team',
+        auto_detect_rule: null,
+        sort_order: 0,
+      },
+      {
+        item_key: 'trace_a_1',
+        label: 'Developers have input into what we measure and how',
+        description: '',
+        dimension: null,
+        trace_principle: 'agency',
+        source: 'manual',
+        scope: 'team',
+        auto_detect_rule: null,
+        sort_order: 0,
+      },
+      {
+        item_key: 'trace_c_1',
+        label: 'We apply our review process reliably across PRs and people',
+        description: '',
+        dimension: null,
+        trace_principle: 'consistent',
+        source: 'manual',
+        scope: 'team',
+        auto_detect_rule: null,
+        sort_order: 0,
+      },
+      {
+        item_key: 'trace_ec_1',
+        label: 'We interpret review patterns with surrounding context, not in isolation',
+        description: '',
+        dimension: null,
+        trace_principle: 'explores_context',
+        source: 'manual',
+        scope: 'team',
+        auto_detect_rule: null,
+        sort_order: 0,
+      },
+    ];
+
+    for (const t of templates) {
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO thriving_templates (item_key, label, description, dimension, trace_principle, source, scope, auto_detect_rule, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.bind([
+        t.item_key,
+        t.label,
+        t.description,
+        t.dimension,
+        t.trace_principle,
+        t.source,
+        t.scope,
+        t.auto_detect_rule,
+        t.sort_order,
+      ]);
+      stmt.step();
+      stmt.free();
+    }
+  }
+
+  /**
+   * Returns all thriving templates, optionally filtered by scope.
+   *
+   * Templates define the available checklist items for LABS (per-PR) and
+   * TRACE (team-wide) checklists.
+   *
+   * @param scope - Optional scope filter ('pr' or 'team')
+   * @returns Promise resolving to array of thriving templates
+   * @throws Error if database not initialized
+   */
+  async getThrivingTemplates(scope?: ChecklistScope): Promise<ThrivingTemplate[]> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    let sql = 'SELECT * FROM thriving_templates';
+    const params: any[] = [];
+
+    if (scope) {
+      sql += ' WHERE scope = ?';
+      params.push(scope);
+    }
+
+    sql += ' ORDER BY dimension, sort_order';
+
+    const stmt = this.db.prepare(sql);
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+
+    const rows: ThrivingTemplate[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as any;
+      rows.push({
+        id: row.id,
+        item_key: row.item_key,
+        label: row.label,
+        description: row.description,
+        dimension: row.dimension,
+        trace_principle: row.trace_principle,
+        source: row.source,
+        scope: row.scope,
+        auto_detect_rule: row.auto_detect_rule,
+        sort_order: row.sort_order,
+      });
+    }
+
+    stmt.free();
+    return rows;
+  }
+
+  /**
+   * Initializes the thriving checklist for a PR by copying pr-scope templates.
+   *
+   * Uses INSERT OR IGNORE to be idempotent - safe to call multiple times for the
+   * same PR without duplicating rows. Returns the full joined checklist after initialization.
+   *
+   * @param prReference - The PR identifier
+   * @returns Promise resolving to the initialized checklist with template data
+   * @throws Error if database not initialized
+   */
+  async initializeChecklistForPR(
+    prReference: string
+  ): Promise<ThrivingChecklistItemWithTemplate[]> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    // copy pr-scope templates into checklist for this PR
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO thriving_checklist (pr_reference, item_key)
+      SELECT ?, item_key FROM thriving_templates WHERE scope = 'pr'
+    `);
+    insertStmt.bind([prReference]);
+    insertStmt.step();
+    insertStmt.free();
+
+    await this.persistToFile();
+
+    return this.getThrivingChecklist(prReference);
+  }
+
+  /**
+   * Returns checklist items joined with template data for a specific PR.
+   *
+   * Provides the full checklist view including template metadata like labels,
+   * descriptions, dimensions, and auto-detect rules.
+   *
+   * @param prReference - The PR identifier
+   * @returns Promise resolving to array of checklist items with template data
+   * @throws Error if database not initialized
+   */
+  async getThrivingChecklist(prReference: string): Promise<ThrivingChecklistItemWithTemplate[]> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT c.*, t.label, t.description, t.dimension, t.trace_principle, t.source, t.scope, t.auto_detect_rule, t.sort_order
+      FROM thriving_checklist c
+      JOIN thriving_templates t ON c.item_key = t.item_key
+      WHERE c.pr_reference = ?
+      ORDER BY t.dimension, t.sort_order
+    `);
+    stmt.bind([prReference]);
+
+    const rows: ThrivingChecklistItemWithTemplate[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as any;
+      rows.push({
+        id: row.id,
+        pr_reference: row.pr_reference,
+        item_key: row.item_key,
+        checked: Boolean(row.checked),
+        checked_at: row.checked_at,
+        auto_detected: Boolean(row.auto_detected),
+        notes: row.notes,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        label: row.label,
+        description: row.description,
+        dimension: row.dimension,
+        trace_principle: row.trace_principle,
+        source: row.source,
+        scope: row.scope,
+        auto_detect_rule: row.auto_detect_rule,
+        sort_order: row.sort_order,
+      });
+    }
+
+    stmt.free();
+    return rows;
+  }
+
+  /**
+   * Toggles a checklist item's checked state for a PR.
+   *
+   * Uses INSERT OR REPLACE to upsert the checklist row. Sets checked_at to
+   * current timestamp when checking, null when unchecking.
+   *
+   * @param prReference - The PR identifier
+   * @param itemKey - The template item key
+   * @param checked - Whether the item should be checked
+   * @param notes - Optional notes to attach to the item
+   * @throws Error if database not initialized
+   */
+  async toggleChecklistItem(
+    prReference: string,
+    itemKey: string,
+    checked: boolean,
+    notes?: string
+  ): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO thriving_checklist (pr_reference, item_key, checked, checked_at, auto_detected, notes, created_at, updated_at)
+      VALUES (
+        ?,
+        ?,
+        ?,
+        CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
+        COALESCE((SELECT auto_detected FROM thriving_checklist WHERE pr_reference = ? AND item_key = ?), 0),
+        COALESCE(?, (SELECT notes FROM thriving_checklist WHERE pr_reference = ? AND item_key = ?), ''),
+        COALESCE((SELECT created_at FROM thriving_checklist WHERE pr_reference = ? AND item_key = ?), CURRENT_TIMESTAMP),
+        CURRENT_TIMESTAMP
+      )
+    `);
+    stmt.bind([
+      prReference,
+      itemKey,
+      checked ? 1 : 0,
+      checked ? 1 : 0,
+      prReference,
+      itemKey,
+      notes !== undefined ? notes : null,
+      prReference,
+      itemKey,
+      prReference,
+      itemKey,
+    ]);
+    stmt.step();
+    stmt.free();
+
+    await this.persistToFile();
+  }
+
+  /**
+   * Updates only the notes field for a checklist item.
+   *
+   * @param prReference - The PR identifier
+   * @param itemKey - The template item key
+   * @param notes - The new notes value
+   * @throws Error if database not initialized
+   */
+  async updateChecklistItemNotes(
+    prReference: string,
+    itemKey: string,
+    notes: string
+  ): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      UPDATE thriving_checklist
+      SET notes = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE pr_reference = ? AND item_key = ?
+    `);
+    stmt.bind([notes, prReference, itemKey]);
+    stmt.step();
+    stmt.free();
+
+    await this.persistToFile();
+  }
+
+  /**
+   * Marks a checklist item as auto-detected.
+   *
+   * When detected=true and the item is not already manually unchecked, sets both
+   * auto_detected=1 and checked=1. When detected=false, clears the auto_detected
+   * flag without changing the checked state.
+   *
+   * This respects user intent: if a user explicitly unchecked an auto-detected item,
+   * re-detection will not override their choice.
+   *
+   * @param prReference - The PR identifier
+   * @param itemKey - The template item key
+   * @param detected - Whether the auto-detection condition is met
+   * @throws Error if database not initialized
+   */
+  async markAutoDetected(prReference: string, itemKey: string, detected: boolean): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    // ensure the checklist row exists first
+    const ensureStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO thriving_checklist (pr_reference, item_key)
+      VALUES (?, ?)
+    `);
+    ensureStmt.bind([prReference, itemKey]);
+    ensureStmt.step();
+    ensureStmt.free();
+
+    if (detected) {
+      // auto-check only if not already manually unchecked
+      // if checked=0 AND auto_detected=0, it's a fresh item -> auto-check it
+      // if checked=0 AND auto_detected=1, user manually unchecked -> don't override
+      // if checked=1, already checked -> just mark auto_detected
+      const stmt = this.db.prepare(`
+        UPDATE thriving_checklist
+        SET auto_detected = 1,
+            checked = CASE WHEN checked = 0 THEN 1 ELSE checked END,
+            checked_at = CASE WHEN checked = 0 THEN CURRENT_TIMESTAMP ELSE checked_at END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE pr_reference = ? AND item_key = ?
+      `);
+      stmt.bind([prReference, itemKey]);
+      stmt.step();
+      stmt.free();
+    } else {
+      const stmt = this.db.prepare(`
+        UPDATE thriving_checklist
+        SET auto_detected = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE pr_reference = ? AND item_key = ?
+      `);
+      stmt.bind([prReference, itemKey]);
+      stmt.step();
+      stmt.free();
+    }
+
+    await this.persistToFile();
+  }
+
+  /**
+   * Returns the team-wide TRACE checklist.
+   *
+   * TRACE items use a fixed pr_reference of '__team__'. Initializes team-scope
+   * templates if not already present.
+   *
+   * @returns Promise resolving to array of TRACE checklist items with template data
+   * @throws Error if database not initialized
+   */
+  async getTraceChecklist(): Promise<ThrivingChecklistItemWithTemplate[]> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    // initialize team-scope items if not present
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO thriving_checklist (pr_reference, item_key)
+      SELECT '__team__', item_key FROM thriving_templates WHERE scope = 'team'
+    `);
+    insertStmt.step();
+    insertStmt.free();
+
+    await this.persistToFile();
+
+    return this.getThrivingChecklist('__team__');
+  }
+
+  /**
+   * Toggles a TRACE (team-scope) checklist item.
+   *
+   * Convenience wrapper around toggleChecklistItem with the fixed '__team__'
+   * pr_reference used for team-wide items.
+   *
+   * @param itemKey - The template item key
+   * @param checked - Whether the item should be checked
+   * @param notes - Optional notes to attach to the item
+   * @throws Error if database not initialized
+   */
+  async toggleTraceItem(itemKey: string, checked: boolean, notes?: string): Promise<void> {
+    return this.toggleChecklistItem('__team__', itemKey, checked, notes);
+  }
+
+  /**
+   * Gets aggregated thriving analytics by dimension.
+   *
+   * Calculates completion rates across PRs for each LABS dimension.
+   * Optionally filters by PR reference and date range.
+   *
+   * @param filters - Optional filters for pr_reference, start_date, end_date
+   * @returns Promise resolving to per-dimension analytics
+   * @throws Error if database not initialized
+   */
+  async getThrivingAnalytics(
+    filters?: ThrivingChecklistFilters
+  ): Promise<
+    { dimension: string; completion_rate: number; item_count: number; checked_count: number }[]
+  > {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    let sql = `
+      SELECT t.dimension,
+             COUNT(*) as item_count,
+             SUM(CASE WHEN c.checked = 1 THEN 1 ELSE 0 END) as checked_count,
+             CAST(SUM(CASE WHEN c.checked = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) as completion_rate
+      FROM thriving_checklist c
+      JOIN thriving_templates t ON c.item_key = t.item_key
+      WHERE t.scope = 'pr' AND t.dimension IS NOT NULL
+    `;
+    const params: any[] = [];
+
+    if (filters?.pr_reference) {
+      sql += ' AND c.pr_reference = ?';
+      params.push(filters.pr_reference);
+    }
+
+    if (filters?.start_date) {
+      sql += ' AND c.created_at >= ?';
+      params.push(filters.start_date);
+    }
+
+    if (filters?.end_date) {
+      sql += ' AND c.created_at <= ?';
+      params.push(filters.end_date);
+    }
+
+    sql += ' GROUP BY t.dimension';
+
+    const stmt = this.db.prepare(sql);
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+
+    const rows: {
+      dimension: string;
+      completion_rate: number;
+      item_count: number;
+      checked_count: number;
+    }[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as any;
+      rows.push({
+        dimension: row.dimension,
+        completion_rate: row.completion_rate,
+        item_count: row.item_count,
+        checked_count: row.checked_count,
+      });
+    }
+
+    stmt.free();
+    return rows;
   }
 
   dispose(): void {

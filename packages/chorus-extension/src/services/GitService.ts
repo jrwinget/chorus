@@ -1,5 +1,9 @@
 import { spawn } from 'child_process';
-import { validateOptionalISODate, sanitizePRReference, validateISODate } from '../utils/gitSecurity';
+import {
+  validateOptionalISODate,
+  sanitizePRReference,
+  validateISODate,
+} from '../utils/gitSecurity';
 
 export interface GitLogEntry {
   hash: string;

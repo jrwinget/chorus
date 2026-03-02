@@ -478,6 +478,164 @@ describe('ContextTreeProvider', () => {
     });
   });
 
+  describe('enrichPRsWithGitHubData edge cases', () => {
+    it('should return PRs as-is when no github service is available', async () => {
+      // create provider without github service
+      const providerNoGithub = new ContextTreeProvider(db, indexer);
+
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'pr',
+          title: 'Test PR',
+          path: 'owner/repo#100',
+          content: 'Description',
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      vi.mocked(db.searchContext).mockResolvedValue(mockContext);
+
+      const section = new ContextItem(
+        'Active Reviews',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await providerNoGithub.getChildren(section);
+
+      // should still show the PR without enrichment
+      expect(children.length).toBeGreaterThan(0);
+      expect(children[0].label).toContain('PR owner/repo#100');
+    });
+
+    it('should handle invalid PR reference gracefully during enrichment', async () => {
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'pr',
+          title: 'Bad PR',
+          path: 'invalid-format',
+          content: 'Description',
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      vi.mocked(db.searchContext).mockResolvedValue(mockContext);
+      vi.mocked(githubService.parsePRReference).mockReturnValue(null);
+
+      const section = new ContextItem(
+        'Active Reviews',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      // should still show the entry (original, unenriched)
+      expect(children.length).toBeGreaterThan(0);
+    });
+
+    it('should keep original entry on github api error during enrichment', async () => {
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'pr',
+          title: 'Error PR',
+          path: 'owner/repo#200',
+          content: 'Description',
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      vi.mocked(db.searchContext).mockResolvedValue(mockContext);
+      vi.mocked(githubService.parsePRReference).mockReturnValue({
+        owner: 'owner',
+        repo: 'repo',
+        number: 200,
+      });
+      vi.mocked(githubService.getPullRequest).mockRejectedValue(new Error('API error'));
+
+      const section = new ContextItem(
+        'Active Reviews',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      // should show the original entry despite API error
+      expect(children.length).toBeGreaterThan(0);
+      expect(children[0].label).toContain('PR owner/repo#200');
+    });
+  });
+
+  describe('error handling in sections', () => {
+    it('should return error item when getRecentSearches throws', async () => {
+      vi.mocked(db.getRecentSearches).mockRejectedValue(new Error('DB error'));
+
+      const section = new ContextItem(
+        'Recent Searches',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(1);
+      expect(children[0].label).toBe('Error loading searches');
+      expect(children[0].contextValue).toBe('error');
+    });
+
+    it('should return error item when active reviews search throws', async () => {
+      vi.mocked(db.searchContext).mockRejectedValue(new Error('DB error'));
+
+      const section = new ContextItem(
+        'Active Reviews',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(1);
+      expect(children[0].label).toBe('Error loading reviews');
+      expect(children[0].contextValue).toBe('error');
+    });
+
+    it('should return error item when file context loading throws', async () => {
+      vi.mocked(indexer.findRelevantContext).mockRejectedValue(new Error('Indexer error'));
+      (provider as any).currentFilePath = '/test/file.ts';
+
+      const section = new ContextItem(
+        'Current File Context',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(1);
+      expect(children[0].label).toBe('Error loading context');
+      expect(children[0].contextValue).toBe('error');
+    });
+
+    it('should return empty array for unknown section', async () => {
+      const section = new ContextItem(
+        'Unknown Section',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'section'
+      );
+
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(0);
+    });
+  });
+
   describe('Active Reviews section', () => {
     it('should display PRs from database in active reviews', async () => {
       const mockPRs: ContextEntry[] = [

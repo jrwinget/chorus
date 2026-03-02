@@ -131,14 +131,13 @@ export class Indexer {
 
       // show user-friendly warning for rate limiting
       if (error?.status === 403 || error?.message?.includes('rate limit')) {
-        vscode.window.showWarningMessage(
-          'GitHub Rate Limit Reached. Token Recommended.',
-          'Configure Token'
-        ).then((selection) => {
-          if (selection === 'Configure Token') {
-            vscode.commands.executeCommand('chorus.configureGitHubToken');
-          }
-        });
+        vscode.window
+          .showWarningMessage('GitHub Rate Limit Reached. Token Recommended.', 'Configure Token')
+          .then((selection) => {
+            if (selection === 'Configure Token') {
+              vscode.commands.executeCommand('chorus.configureGitHubToken');
+            }
+          });
       }
 
       // graceful degradation: continue without GitHub data

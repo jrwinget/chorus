@@ -211,6 +211,150 @@ describe('ContextHoverProvider', () => {
       expect(result?.contents).toBeDefined();
     });
 
+    it('should format PR items correctly', async () => {
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'pr',
+          title: 'Add authentication flow',
+          path: 'owner/repo#42',
+          content: 'PR description',
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      const document = {
+        getText: vi.fn().mockReturnValue('authentication'),
+        getWordRangeAtPosition: vi.fn().mockReturnValue(new vscode.Range(0, 0, 0, 14)),
+        fileName: 'test.ts',
+      } as any;
+
+      const position = {} as any;
+      const token = {} as any;
+
+      vi.mocked(indexer.findRelevantContext).mockResolvedValue(mockContext);
+
+      const result = await provider.provideHover(document, position, token);
+
+      expect(result).toBeDefined();
+      expect(result).toBeInstanceOf(vscode.Hover);
+    });
+
+    it('should format commit with files list', async () => {
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'commit',
+          title: 'Fix auth',
+          path: 'abc123',
+          content: 'Content',
+          metadata: {
+            hash: 'abc123def',
+            author: 'Alice',
+            date: '2023-06-15',
+            files: ['src/auth.ts', 'src/utils.ts', 'src/types.ts', 'src/index.ts'],
+          },
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      const document = {
+        getText: vi.fn().mockReturnValue('authentication'),
+        getWordRangeAtPosition: vi.fn().mockReturnValue(new vscode.Range(0, 0, 0, 14)),
+        fileName: 'test.ts',
+      } as any;
+
+      const position = {} as any;
+      const token = {} as any;
+
+      vi.mocked(indexer.findRelevantContext).mockResolvedValue(mockContext);
+
+      const result = await provider.provideHover(document, position, token);
+
+      expect(result).toBeDefined();
+      expect(result).toBeInstanceOf(vscode.Hover);
+    });
+
+    it('should format commit with missing metadata fields', async () => {
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'commit',
+          title: 'Minimal commit',
+          path: 'xyz',
+          content: 'Content',
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      const document = {
+        getText: vi.fn().mockReturnValue('minimal'),
+        getWordRangeAtPosition: vi.fn().mockReturnValue(new vscode.Range(0, 0, 0, 7)),
+        fileName: 'test.ts',
+      } as any;
+
+      const position = {} as any;
+      const token = {} as any;
+
+      vi.mocked(indexer.findRelevantContext).mockResolvedValue(mockContext);
+
+      const result = await provider.provideHover(document, position, token);
+
+      // should handle missing hash, author, date gracefully
+      expect(result).toBeDefined();
+      expect(result).toBeInstanceOf(vscode.Hover);
+    });
+
+    it('should return undefined when indexer throws error', async () => {
+      const document = {
+        getText: vi.fn().mockReturnValue('authentication'),
+        getWordRangeAtPosition: vi.fn().mockReturnValue(new vscode.Range(0, 0, 0, 14)),
+        fileName: 'test.ts',
+      } as any;
+
+      const position = {} as any;
+      const token = {} as any;
+
+      vi.mocked(indexer.findRelevantContext).mockRejectedValue(new Error('Indexer crashed'));
+
+      const result = await provider.provideHover(document, position, token);
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should format doc with long content (>150 chars) with ellipsis', async () => {
+      const longContent = 'A'.repeat(200);
+      const mockContext: ContextEntry[] = [
+        {
+          id: 1,
+          type: 'doc',
+          title: 'Long Doc',
+          path: 'docs/long.md',
+          content: longContent,
+          metadata: {},
+          indexed_at: '2023-01-01',
+        },
+      ];
+
+      const document = {
+        getText: vi.fn().mockReturnValue('documentation'),
+        getWordRangeAtPosition: vi.fn().mockReturnValue(new vscode.Range(0, 0, 0, 13)),
+        fileName: 'test.ts',
+      } as any;
+
+      const position = {} as any;
+      const token = {} as any;
+
+      vi.mocked(indexer.findRelevantContext).mockResolvedValue(mockContext);
+
+      const result = await provider.provideHover(document, position, token);
+
+      expect(result).toBeDefined();
+      expect(result).toBeInstanceOf(vscode.Hover);
+    });
+
     it('should format doc items correctly', async () => {
       const mockContext: ContextEntry[] = [
         {

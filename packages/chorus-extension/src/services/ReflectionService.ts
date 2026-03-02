@@ -119,12 +119,10 @@ export class ReflectionService {
               'Try using blinded reviews more consistently to reduce conformity pressure.';
             break;
           case 'hidden_profile':
-            suggestion =
-              'Encourage reviewers to explicitly share unique information they possess.';
+            suggestion = 'Encourage reviewers to explicitly share unique information they possess.';
             break;
           case 'status_bias':
-            suggestion =
-              'Emphasize evidence-based feedback over relying on seniority or title.';
+            suggestion = 'Emphasize evidence-based feedback over relying on seniority or title.';
             break;
           case 'overconfidence':
             suggestion = 'Use confidence calibration features to improve self-awareness.';
@@ -317,8 +315,7 @@ export class ReflectionService {
     // low-risk prs can use consensus
     return {
       scheme: 'consensus',
-      reason:
-        'low-risk changes can use consensus-based decision-making to build team alignment',
+      reason: 'low-risk changes can use consensus-based decision-making to build team alignment',
     };
   }
 
@@ -375,7 +372,10 @@ export class ReflectionService {
 
     // scheme distribution
     report += '## Decision Scheme Distribution\n\n';
-    const totalSchemes = Object.values(analytics.scheme_distribution).reduce((sum, count) => sum + count, 0);
+    const totalSchemes = Object.values(analytics.scheme_distribution).reduce(
+      (sum, count) => sum + count,
+      0
+    );
     for (const [scheme, count] of Object.entries(analytics.scheme_distribution)) {
       const percentage = totalSchemes > 0 ? (count / totalSchemes) * 100 : 0;
       report += `- **${scheme}**: ${count} (${percentage.toFixed(1)}%)\n`;
@@ -396,11 +396,7 @@ export class ReflectionService {
       report += '## Pattern Insights\n\n';
       for (const insight of insights) {
         const icon =
-          insight.type === 'warning'
-            ? '⚠️'
-            : insight.type === 'recommendation'
-              ? '💡'
-              : '📊';
+          insight.type === 'warning' ? '⚠️' : insight.type === 'recommendation' ? '💡' : '📊';
         report += `### ${icon} ${insight.title}\n\n`;
         report += `${insight.description}\n\n`;
         if (insight.evidence.length > 0) {

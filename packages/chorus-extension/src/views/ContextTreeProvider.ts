@@ -254,8 +254,7 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<ContextItem>
       return `${entry.path}\n\n${entry.content.substring(0, 200)}...`;
     } else if (entry.type === 'pr' && entry.metadata['githubData']) {
       const prData = entry.metadata['githubData'] as GitHubPR;
-      const status =
-        prData.merged_at ? 'Merged' : prData.state === 'closed' ? 'Closed' : 'Open';
+      const status = prData.merged_at ? 'Merged' : prData.state === 'closed' ? 'Closed' : 'Open';
       return `${entry.title}\n\nStatus: ${status}\nAuthor: ${prData.user.login}\nUpdated: ${new Date(prData.updated_at).toLocaleDateString()}`;
     }
     return entry.title;

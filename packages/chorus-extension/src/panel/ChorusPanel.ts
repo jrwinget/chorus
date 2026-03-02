@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { LocalDB, BallotEntry } from '../storage/LocalDB';
 import { getGitUserInfo } from '../services/GitConfigService';
 import { GitHubService } from '../services/GitHubService';
+import { ThrivingService } from '../services/ThrivingService';
 
 export class ChorusPanel {
   public static currentPanel: ChorusPanel | undefined;
@@ -11,6 +12,7 @@ export class ChorusPanel {
   private disposables: vscode.Disposable[] = [];
   private readonly githubService: GitHubService | undefined;
   private currentPRReference: string = '';
+  private readonly thrivingService: ThrivingService;
 
   public static createOrShow(
     extensionUri: vscode.Uri,
@@ -35,6 +37,7 @@ export class ChorusPanel {
         localResourceRoots: [
           vscode.Uri.joinPath(extensionUri, 'media'),
           vscode.Uri.joinPath(extensionUri, 'out', 'panel'),
+          vscode.Uri.joinPath(extensionUri, 'node_modules', '@vscode', 'codicons', 'dist'),
         ],
       }
     );
@@ -50,6 +53,7 @@ export class ChorusPanel {
   ) {
     this.panel = panel;
     this.githubService = githubService;
+    this.thrivingService = new ThrivingService(db);
 
     this.update();
 
@@ -96,6 +100,24 @@ export class ChorusPanel {
             return;
           case 'saveRetrospective':
             await this.handleSaveRetrospective(message.data);
+            return;
+          case 'getThrivingChecklist':
+            await this.handleGetThrivingChecklist(message.prReference);
+            return;
+          case 'toggleThrivingItem':
+            await this.handleToggleThrivingItem(message);
+            return;
+          case 'toggleTraceItem':
+            await this.handleToggleTraceItem(message);
+            return;
+          case 'updateThrivingNotes':
+            await this.handleUpdateThrivingNotes(message);
+            return;
+          case 'getThrivingAnalytics':
+            await this.handleGetThrivingAnalytics();
+            return;
+          case 'refreshThrivingAutoDetect':
+            await this.handleRefreshThrivingAutoDetect(message.prReference);
             return;
         }
       },
@@ -255,6 +277,9 @@ export class ChorusPanel {
         command: 'ballotSubmitted',
         success: true,
       });
+
+      // trigger thriving auto-detection after ballot submission
+      this.handleRefreshThrivingAutoDetect(ballot.prReference).catch(console.error);
     } catch (error) {
       console.error('Ballot submission failed:', error);
       await this.panel.webview.postMessage({
@@ -366,11 +391,113 @@ export class ChorusPanel {
     }
   }
 
+  private async handleGetThrivingChecklist(prReference: string): Promise<void> {
+    try {
+      const pr = prReference || this.currentPRReference;
+      if (!pr) {
+        await this.panel.webview.postMessage({
+          command: 'thrivingChecklistLoaded',
+          data: { labsItems: [], traceItems: [], autoDetectedKeys: [] },
+        });
+        return;
+      }
+      const data = await this.thrivingService.getChecklistForPR(pr);
+      await this.panel.webview.postMessage({
+        command: 'thrivingChecklistLoaded',
+        data,
+      });
+    } catch (error) {
+      console.error('Failed to load thriving checklist:', error);
+      await this.panel.webview.postMessage({
+        command: 'error',
+        message: 'Failed to load thriving checklist: ' + error,
+      });
+    }
+  }
+
+  private async handleToggleThrivingItem(message: any): Promise<void> {
+    try {
+      await this.db.toggleChecklistItem(
+        message.prReference,
+        message.itemKey,
+        message.checked,
+        message.notes
+      );
+      await this.panel.webview.postMessage({
+        command: 'thrivingItemToggled',
+        itemKey: message.itemKey,
+        checked: message.checked,
+      });
+    } catch (error) {
+      console.error('Failed to toggle thriving item:', error);
+      await this.panel.webview.postMessage({
+        command: 'error',
+        message: 'Failed to update checklist item: ' + error,
+      });
+    }
+  }
+
+  private async handleToggleTraceItem(message: any): Promise<void> {
+    try {
+      await this.db.toggleTraceItem(message.itemKey, message.checked, message.notes);
+      await this.panel.webview.postMessage({
+        command: 'thrivingItemToggled',
+        itemKey: message.itemKey,
+        checked: message.checked,
+      });
+    } catch (error) {
+      console.error('Failed to toggle TRACE item:', error);
+      await this.panel.webview.postMessage({
+        command: 'error',
+        message: 'Failed to update TRACE item: ' + error,
+      });
+    }
+  }
+
+  private async handleUpdateThrivingNotes(message: any): Promise<void> {
+    try {
+      await this.db.updateChecklistItemNotes(message.prReference, message.itemKey, message.notes);
+    } catch (error) {
+      console.error('Failed to update thriving notes:', error);
+    }
+  }
+
+  private async handleGetThrivingAnalytics(): Promise<void> {
+    try {
+      const analytics = await this.thrivingService.computeAnalytics();
+      await this.panel.webview.postMessage({
+        command: 'thrivingAnalyticsLoaded',
+        data: analytics,
+      });
+    } catch (error) {
+      console.error('Failed to load thriving analytics:', error);
+      await this.panel.webview.postMessage({
+        command: 'error',
+        message: 'Failed to load thriving analytics: ' + error,
+      });
+    }
+  }
+
+  private async handleRefreshThrivingAutoDetect(prReference: string): Promise<void> {
+    try {
+      const pr = prReference || this.currentPRReference;
+      if (!pr) return;
+      const detected = await this.thrivingService.runAutoDetection(pr);
+      await this.panel.webview.postMessage({
+        command: 'thrivingAutoDetectComplete',
+        detectedKeys: detected,
+      });
+    } catch (error) {
+      console.error('Failed to refresh auto-detection:', error);
+    }
+  }
+
   private update(): void {
     this.panel.title = 'Chorus';
     this.panel.webview.html = this.getHtmlForWebview();
   }
 
+  /* v8 ignore start */
   private getHtmlForWebview(): string {
     const scriptUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, 'media', 'panel.js')
@@ -384,6 +511,17 @@ export class ChorusPanel {
       vscode.Uri.joinPath(this.extensionUri, 'media', 'styles.css')
     );
 
+    const codiconsUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(
+        this.extensionUri,
+        'node_modules',
+        '@vscode',
+        'codicons',
+        'dist',
+        'codicon.css'
+      )
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -391,16 +529,18 @@ export class ChorusPanel {
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<link href="${styleUri}" rel="stylesheet">
 	<link href="${stylesUri}" rel="stylesheet">
+	<link href="${codiconsUri}" rel="stylesheet">
 	<title>Chorus</title>
 </head>
 <body>
 	<div class="chorus-panel">
 		<nav class="tab-nav" role="tablist">
-			<button class="tab-button active" data-tab="context" role="tab" aria-selected="true">Context</button>
-			<button class="tab-button" data-tab="evidence" role="tab" aria-selected="false">Evidence</button>
-			<button class="tab-button" data-tab="equity" role="tab" aria-selected="false">Equity</button>
-			<button class="tab-button" data-tab="calibration" role="tab" aria-selected="false">Calibration</button>
-			<button class="tab-button" data-tab="reflection" role="tab" aria-selected="false">Reflection</button>
+			<button class="tab-button active" data-tab="context" role="tab" aria-selected="true"><span class="codicon codicon-search"></span> Context</button>
+			<button class="tab-button" data-tab="evidence" role="tab" aria-selected="false"><span class="codicon codicon-beaker"></span> Evidence</button>
+			<button class="tab-button" data-tab="equity" role="tab" aria-selected="false"><span class="codicon codicon-law"></span> Equity</button>
+			<button class="tab-button" data-tab="calibration" role="tab" aria-selected="false"><span class="codicon codicon-graph-line"></span> Calibration</button>
+			<button class="tab-button" data-tab="reflection" role="tab" aria-selected="false"><span class="codicon codicon-mirror"></span> Reflection</button>
+			<button class="tab-button" data-tab="thriving" role="tab" aria-selected="false"><span class="codicon codicon-heart"></span> Thriving</button>
 		</nav>
 
 		<div class="tab-content">
@@ -630,6 +770,15 @@ export class ChorusPanel {
 					</div>
 				</div>
 
+				<!-- Thriving Dimensions Section -->
+				<div class="reflection-section">
+					<h4><span class="codicon codicon-heart"></span> Thriving Dimensions</h4>
+					<p class="equity-help-text">LABS dimension completion rates across your reviews</p>
+					<div id="thriving-dimension-chart" class="dimension-chart">
+						<p class="placeholder-text">Complete thriving checklists during reviews to see dimension data here.</p>
+					</div>
+				</div>
+
 				<!-- Export Section -->
 				<div class="reflection-section">
 					<h4>Export Retrospective Report</h4>
@@ -638,7 +787,61 @@ export class ChorusPanel {
 				</div>
 			</div>
 
+			<div id="thriving-tab" class="tab-pane" role="tabpanel">
+				<div class="thriving-section">
+					<div class="section-header">
+						<span class="codicon codicon-heart"></span>
+						<span class="section-header-label">Developer Thriving Checklist</span>
+						<button id="refresh-thriving" class="section-header-action" title="Refresh auto-detection">
+							<span class="codicon codicon-refresh"></span> Refresh
+						</button>
+					</div>
+					<p class="equity-help-text mb-md">Based on Dr. Cat Hicks' LABS framework. Check items as you complete them during your review.</p>
+
+					<div id="thriving-labs-section">
+						<div id="dimension-learning_culture" class="dimension-group">
+							<div class="dimension-header">
+								<h4>Learning Culture</h4>
+								<span id="progress-learning_culture" class="dimension-progress">0/0</span>
+							</div>
+							<div id="items-learning_culture" class="checklist-items"></div>
+						</div>
+						<div id="dimension-agency" class="dimension-group">
+							<div class="dimension-header">
+								<h4>Agency</h4>
+								<span id="progress-agency" class="dimension-progress">0/0</span>
+							</div>
+							<div id="items-agency" class="checklist-items"></div>
+						</div>
+						<div id="dimension-belonging" class="dimension-group">
+							<div class="dimension-header">
+								<h4>Belonging</h4>
+								<span id="progress-belonging" class="dimension-progress">0/0</span>
+							</div>
+							<div id="items-belonging" class="checklist-items"></div>
+						</div>
+						<div id="dimension-self_efficacy" class="dimension-group">
+							<div class="dimension-header">
+								<h4>Self-Efficacy</h4>
+								<span id="progress-self_efficacy" class="dimension-progress">0/0</span>
+							</div>
+							<div id="items-self_efficacy" class="checklist-items"></div>
+						</div>
+					</div>
+
+					<div class="trace-checklist">
+						<div class="section-header">
+							<span class="codicon codicon-shield"></span>
+							<span class="section-header-label">TRACE Principles (Team-Wide)</span>
+						</div>
+						<p class="equity-help-text mb-md">Healthy measurement principles. These apply across all reviews.</p>
+						<div id="trace-items" class="checklist-items"></div>
+					</div>
+				</div>
+			</div>
+
 		</div>
+		<div id="toast-container"></div>
 	</div>
 
 	<!-- Decision Scheme Modal -->
@@ -739,8 +942,9 @@ export class ChorusPanel {
 </body>
 </html>`;
   }
+  /* v8 ignore stop */
 
-/**
+  /**
    * Formats a ballot summary comment for GitHub PR posting.
    *
    * Generates a markdown-formatted summary of ballot results including:
@@ -781,7 +985,9 @@ export class ChorusPanel {
 
     // aggregate nudge responses
     let nudgeSummary = '';
-    const ballotsWithNudges = ballots.filter((b) => b.nudge_responses && b.nudge_responses !== '{}');
+    const ballotsWithNudges = ballots.filter(
+      (b) => b.nudge_responses && b.nudge_responses !== '{}'
+    );
 
     if (ballotsWithNudges.length > 0) {
       const risks: string[] = [];
@@ -965,14 +1171,13 @@ ${nudgeSummary}
       await this.db.markBallotsPostedToGitHub(prReference, commentUrl);
 
       // show success notification
-      vscode.window.showInformationMessage(
-        `Ballot Summary Posted to GitHub PR #${prNumber}`,
-        'View PR'
-      ).then((selection) => {
-        if (selection === 'View PR') {
-          vscode.env.openExternal(vscode.Uri.parse(commentUrl));
-        }
-      });
+      vscode.window
+        .showInformationMessage(`Ballot Summary Posted to GitHub PR #${prNumber}`, 'View PR')
+        .then((selection) => {
+          if (selection === 'View PR') {
+            vscode.env.openExternal(vscode.Uri.parse(commentUrl));
+          }
+        });
 
       console.log(`ChorusPanel: Ballot summary posted to ${commentUrl}`);
     } catch (error) {
@@ -987,14 +1192,16 @@ ${nudgeSummary}
     try {
       // query retrospectives and schemes with filters
       const retrospectives = await this.db.getRetrospectives(filters);
-      const timeline = await Promise.all(retrospectives.map(async (retro) => {
-        const scheme = await this.db.getDecisionScheme(retro.pr_id);
-        return { ...retro, scheme };
-      }));
+      const timeline = await Promise.all(
+        retrospectives.map(async (retro) => {
+          const scheme = await this.db.getDecisionScheme(retro.pr_id);
+          return { ...retro, scheme };
+        })
+      );
 
       await this.panel.webview.postMessage({
         command: 'reflectionTimeline',
-        timeline
+        timeline,
       });
     } catch (error) {
       console.error('Failed to Get Reflection Timeline:', error);
@@ -1013,8 +1220,11 @@ ${nudgeSummary}
 
       await this.panel.webview.postMessage({
         command: 'patternInsights',
-        insights
+        insights,
       });
+
+      // Also send thriving analytics for reflection tab
+      this.handleGetThrivingAnalytics().catch(console.error);
     } catch (error) {
       console.error('Failed to Analyze Patterns:', error);
       await this.panel.webview.postMessage({
@@ -1052,8 +1262,11 @@ ${nudgeSummary}
       );
 
       await this.panel.webview.postMessage({
-        command: 'decisionSchemeSaved'
+        command: 'decisionSchemeSaved',
       });
+
+      // trigger thriving auto-detection after saving decision scheme
+      this.handleRefreshThrivingAutoDetect(this.currentPRReference).catch(console.error);
     } catch (error) {
       console.error('Failed to Save Decision Scheme:', error);
       await this.panel.webview.postMessage({
@@ -1065,19 +1278,18 @@ ${nudgeSummary}
 
   private async handleSaveRetrospective(data: any): Promise<void> {
     try {
-      await this.db.recordRetrospective(
-        this.currentPRReference,
-        'manual',
-        {
-          what_went_wrong: data.what_went_wrong,
-          what_to_improve: data.what_to_improve,
-          bias_patterns: data.bias_patterns
-        }
-      );
+      await this.db.recordRetrospective(this.currentPRReference, 'manual', {
+        what_went_wrong: data.what_went_wrong,
+        what_to_improve: data.what_to_improve,
+        bias_patterns: data.bias_patterns,
+      });
 
       await this.panel.webview.postMessage({
-        command: 'retrospectiveSaved'
+        command: 'retrospectiveSaved',
       });
+
+      // trigger thriving auto-detection after saving retrospective
+      this.handleRefreshThrivingAutoDetect(this.currentPRReference).catch(console.error);
     } catch (error) {
       console.error('Failed to Save Retrospective:', error);
       await this.panel.webview.postMessage({
@@ -1107,7 +1319,9 @@ ${nudgeSummary}
       const workspacePath = workspaceFolders[0].uri.fsPath;
 
       // get current branch
-      const { getCurrentBranch, extractPRNumberFromBranch } = await import('../services/GitService');
+      const { getCurrentBranch, extractPRNumberFromBranch } = await import(
+        '../services/GitService'
+      );
       const branchName = await getCurrentBranch(workspacePath);
 
       if (!branchName) {

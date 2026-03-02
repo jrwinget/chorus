@@ -129,13 +129,13 @@ export function isValidGitReference(ref: string): boolean {
 
   // Reject dangerous patterns
   const dangerousPatterns = [
-    /\.\./,           // Directory traversal
+    /\.\./, // Directory traversal
     /[\x00-\x1f\x7f]/, // Control characters
-    /[ ~^:?*\[\\]/,   // Git-invalid characters
-    /^[.\/]/,         // Starts with . or /
-    /[.\/]$/,         // Ends with . or /
-    /@\{/,            // Ref log syntax
-    /^-/,             // Starts with dash (looks like option)
+    /[ ~^:?*\[\\]/, // Git-invalid characters
+    /^[.\/]/, // Starts with . or /
+    /[.\/]$/, // Ends with . or /
+    /@\{/, // Ref log syntax
+    /^-/, // Starts with dash (looks like option)
   ];
 
   return !dangerousPatterns.some((pattern) => pattern.test(ref));

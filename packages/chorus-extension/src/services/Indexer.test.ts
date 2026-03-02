@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Indexer } from './Indexer';
-import { TestDatabase, createMockVSCodeWorkspace, createMockVSCodeExtensionContext } from '../test/testUtils';
+import {
+  TestDatabase,
+  createMockVSCodeWorkspace,
+  createMockVSCodeExtensionContext,
+} from '../test/testUtils';
 import * as GitService from './GitService';
 import { GitHubService } from './GitHubService';
 import { GitHubPR, GitHubComment, GitHubReview } from '../types/github';
@@ -848,6 +852,86 @@ describe('Indexer', () => {
       await expect(indexerWithGitHub.indexWorkspace()).resolves.not.toThrow();
     });
 
+    it('should show warning with configure token option on rate limit error', async () => {
+      // error must be thrown from detectGitHubRepo to reach indexGitHubData's catch
+      // (fetchPRs catches errors internally and returns [])
+      const rateLimitError: any = new Error('rate limit exceeded');
+      rateLimitError.status = 403;
+
+      mockGitHubService.detectGitHubRepo.mockRejectedValue(rateLimitError);
+
+      const mockVscode = await import('vscode');
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: '/test/workspace' },
+          name: 'test',
+        },
+      ] as any;
+      // mock showWarningMessage to return a thenable (source calls .then())
+      vi.mocked(mockVscode.window.showWarningMessage).mockResolvedValue('Configure Token' as any);
+
+      vi.spyOn(GitService, 'simpleGitLog').mockResolvedValue([]);
+      mockVscode.workspace.findFiles = vi.fn().mockResolvedValue([]);
+
+      await indexerWithGitHub.indexWorkspace();
+
+      // verify warning message was shown with correct text
+      expect(mockVscode.window.showWarningMessage).toHaveBeenCalledWith(
+        'GitHub Rate Limit Reached. Token Recommended.',
+        'Configure Token'
+      );
+    });
+
+    it('should detect rate limit from error message containing "rate limit"', async () => {
+      // error with no status but message containing "rate limit"
+      const error: any = new Error('API rate limit exceeded for unauthenticated requests');
+
+      mockGitHubService.detectGitHubRepo.mockRejectedValue(error);
+
+      const mockVscode = await import('vscode');
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: '/test/workspace' },
+          name: 'test',
+        },
+      ] as any;
+      vi.mocked(mockVscode.window.showWarningMessage).mockResolvedValue(undefined as any);
+
+      vi.spyOn(GitService, 'simpleGitLog').mockResolvedValue([]);
+      mockVscode.workspace.findFiles = vi.fn().mockResolvedValue([]);
+
+      await indexerWithGitHub.indexWorkspace();
+
+      // should show warning because error message includes "rate limit"
+      expect(mockVscode.window.showWarningMessage).toHaveBeenCalledWith(
+        'GitHub Rate Limit Reached. Token Recommended.',
+        'Configure Token'
+      );
+    });
+
+    it('should not show rate limit warning for non-rate-limit errors', async () => {
+      // error without status=403 and without "rate limit" in message
+      const error = new Error('Network timeout');
+
+      mockGitHubService.detectGitHubRepo.mockRejectedValue(error);
+
+      const mockVscode = await import('vscode');
+      mockVscode.workspace.workspaceFolders = [
+        {
+          uri: { fsPath: '/test/workspace' },
+          name: 'test',
+        },
+      ] as any;
+
+      vi.spyOn(GitService, 'simpleGitLog').mockResolvedValue([]);
+      mockVscode.workspace.findFiles = vi.fn().mockResolvedValue([]);
+
+      await indexerWithGitHub.indexWorkspace();
+
+      // should NOT show warning for non-rate-limit errors
+      expect(mockVscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+
     it('should search PR content with BM25 ranking', async () => {
       mockGitHubService.detectGitHubRepo.mockResolvedValue({ owner: 'test', repo: 'repo' });
       mockGitHubService.listPullRequests.mockResolvedValue([mockPR]);
@@ -933,10 +1017,7 @@ describe('Indexer', () => {
     });
 
     it('should handle reviews with null body', async () => {
-      const reviewsWithNullBody = [
-        { ...mockReviews[0], body: null },
-        { ...mockReviews[1] },
-      ];
+      const reviewsWithNullBody = [{ ...mockReviews[0], body: null }, { ...mockReviews[1] }];
       mockGitHubService.detectGitHubRepo.mockResolvedValue({ owner: 'test', repo: 'repo' });
       mockGitHubService.listPullRequests.mockResolvedValue([mockPR]);
       mockGitHubService.getPRComments.mockResolvedValue([]);
