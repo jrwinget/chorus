@@ -8,8 +8,7 @@ dist/
 *.vsix
 
 # IDE files
-.vscode/settings.json
-.vscode/launch.json
+.vscode/
 
 # OS generated files
 .DS_Store
@@ -35,3 +34,4 @@ coverage/
 # Temporary files
 .tmp/
 temp/
+*.bak

@@ -24,10 +24,13 @@ These are common outcomes of how human cognition works in group settings.
 Chorus implements a **5-layer decision architecture** based on social judgment theory:
 
 ### 1. Context Layer
+
 Automatically surfaces relevant code history, related PRs, and documentation using local git indexing and BM25 relevance scoring. No more "why was this written this way?" questions because the answer is already in the panel.
 
 ### 2. Participation Layer
+
 **Elaboration nudges** prompt reviewers to articulate their reasoning before voting:
+
 - "Have you considered alternative approaches?"
 - "What's the main risk you're concerned about?"
 - "Any dissenting views worth noting?"
@@ -35,20 +38,24 @@ Automatically surfaces relevant code history, related PRs, and documentation usi
 These prompts combat shallow reviews and surface minority opinions that might otherwise be suppressed.
 
 ### 3. Evidence Layer
+
 Structured templates require concrete evidence (test results, benchmarks, specs) rather than opinions. Smart parsing detects test frameworks (Jest, Vitest, Pytest) and extracts pass/fail counts automatically.
 
 ### 4. Calibration Layer
+
 Reviewers assign confidence levels (1-5) to their decisions. The system tracks actual outcomes and computes Brier scores, showing you when you're overconfident or underconfident. Over time, this trains better judgment calibration.
 
 ### 5. Reflection Layer
+
 Post-merge retrospectives and pattern detection identify systematic issues:
+
 - **Overconfidence patterns**: High confidence + wrong outcome
 - **Lack of variation**: Team always uses same decision scheme
 - **Low-confidence decisions**: Uncertainty markers that warrant follow-up
 
 ## Why This Works
 
-Chorus doesn't try to eliminate human bias; rather, it redesigns the decision-making *process* to work with how people actually think:
+Chorus doesn't try to eliminate human bias; rather, it redesigns the decision-making _process_ to work with how people actually think:
 
 1. **Blinded ballots**: Reviewers submit independent judgments before seeing others' votes, preventing anchoring and conformity
 2. **Reveal phase**: After collecting independent input, the team transitions to open discussion with full context
@@ -60,16 +67,19 @@ This is the same approach used in intelligence analysis, medical diagnosis, and 
 ## Installation
 
 ### From VS Code Marketplace
+
 ```bash
 code --install-extension chorus.chorus-extension
 ```
 
 ### From VSIX
+
 ```bash
 code --install-extension chorus-extension-0.1.0.vsix
 ```
 
 ### From Source
+
 ```bash
 git clone https://github.com/user/chorus.git
 cd chorus
@@ -112,12 +122,14 @@ The **Context** tab shows related commits, PRs, and docs for the current changes
 
 ```typescript
 // In your editor, changed lines show CodeLens annotations:
-export function calculateTotal(items: Item[]) {  // ← Related context (3)
+export function calculateTotal(items: Item[]) {
+  // ← Related context (3)
   return items.reduce((sum, item) => sum + item.price, 0);
 }
 ```
 
 Click the annotation to see:
+
 - Commits that previously modified this function
 - PRs that discussed similar changes
 - Documentation mentioning this code path
@@ -130,19 +142,23 @@ The **Evidence** tab generates structured evidence for PR descriptions:
 ## Evidence
 
 ### Tests
+
 ✅ 47 passed, 0 failed (unit tests)
 ✅ 12 passed, 0 failed (integration tests)
 
 ### Benchmarks
+
 | Operation | Before | After | Change |
-|-----------|--------|-------|--------|
+| --------- | ------ | ----- | ------ |
 | parse()   | 2.3ms  | 1.8ms | -21%   |
 
 ### Specs
+
 Implements RFC-2024-03 (Async Validation)
 Satisfies requirements: REQ-001, REQ-003, REQ-007
 
 ### Risk Assessment
+
 - **Performance**: Low (benchmarked, no regressions)
 - **Breaking**: None (backward compatible)
 - **Security**: Medium (new input validation, needs audit)
@@ -173,13 +189,13 @@ These insights help teams learn and adapt their process over time.
 
 ## Commands
 
-| Command | Shortcut | Description |
-|---------|----------|-------------|
-| `Chorus: Show Panel` | `Ctrl+Shift+C` | Open the main Chorus panel |
-| `Chorus: Add Evidence Block` | `Ctrl+Shift+V` | Parse clipboard test results |
-| `Chorus: Submit Ballot` | - | Submit independent review ballot |
-| `Chorus: Reveal Results` | - | End blinded phase, show all votes |
-| `Chorus: Start Retrospective` | - | Begin post-merge reflection |
+| Command                       | Shortcut       | Description                       |
+| ----------------------------- | -------------- | --------------------------------- |
+| `Chorus: Show Panel`          | `Ctrl+Shift+C` | Open the main Chorus panel        |
+| `Chorus: Add Evidence Block`  | `Ctrl+Shift+V` | Parse clipboard test results      |
+| `Chorus: Submit Ballot`       | -              | Submit independent review ballot  |
+| `Chorus: Reveal Results`      | -              | End blinded phase, show all votes |
+| `Chorus: Start Retrospective` | -              | Begin post-merge reflection       |
 
 ## Configuration
 
@@ -195,7 +211,7 @@ These insights help teams learn and adapt their process over time.
   "chorus.autoIndex": true,
 
   // Enable elaboration nudges for low-confidence votes
-  "chorus.enableNudges": true
+  "chorus.enableNudges": true,
 }
 ```
 
@@ -267,4 +283,4 @@ A: Yes, the GitHub integration is optional. Core features work with local git re
 
 **AGPL‑3.0 License**: See [LICENSE](LICENSE) for details.
 
-***Making better technical decisions through better decision-making processes.***
+**_Making better technical decisions through better decision-making processes._**

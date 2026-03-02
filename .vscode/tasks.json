@@ -1,20 +1,20 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"type": "npm",
-			"script": "build",
-			"path": "packages/chorus-extension/",
-			"group": {
-				"kind": "build",
-				"isDefault": true
-			},
-			"problemMatcher": "$tsc",
-			"label": "npm: build - packages/chorus-extension",
-			"detail": "tsc -p ./",
-			"presentation": {
-				"reveal": "silent"
-			}
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "path": "packages/chorus-extension/",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$tsc",
+      "label": "npm: build - packages/chorus-extension",
+      "detail": "tsc -p ./",
+      "presentation": {
+        "reveal": "silent"
+      }
+    }
+  ]
 }
