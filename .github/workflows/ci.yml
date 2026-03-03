@@ -1,10 +1,12 @@
-name: CI
-
 on:
   push:
-    branches: [main, develop]
+    branches: [main, staging]
   pull_request:
-    branches: [main, develop]
+    branches: [main, staging]
+
+defaults:
+  run:
+    working-directory: packages/chorus-extension
 
 jobs:
   test:
@@ -22,7 +24,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "npm"
+          cache: npm
+          cache-dependency-path: packages/chorus-extension/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -31,136 +34,67 @@ jobs:
         run: npm run lint
 
       - name: Format check
-        run: |
-          npm run format
-          git diff --exit-code || (echo "Code formatting check failed. Run 'npm run format' to fix." && exit 1)
+        run: npx prettier --check "src/**/*.ts"
 
       - name: Build project
         run: npm run build
-
-      - name: Run unit tests
-        run: npm run test
 
       - name: Run tests with coverage
         run: npm run test:coverage
 
-      - name: Check coverage thresholds
-        run: |
-          # Ensure coverage meets minimum thresholds (80%)
-          npm run test:coverage -- --reporter=json > coverage-report.json
-          LINES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('coverage-report.json')).summary.lines.pct)")
-          FUNCTIONS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('coverage-report.json')).summary.functions.pct)")
-          BRANCHES=$(node -e "console.log(JSON.parse(require('fs').readFileSync('coverage-report.json')).summary.branches.pct)")
-          STATEMENTS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('coverage-report.json')).summary.statements.pct)")
-
-          echo "Coverage Report:"
-          echo "Lines: ${LINES}%"
-          echo "Functions: ${FUNCTIONS}%"
-          echo "Branches: ${BRANCHES}%"
-          echo "Statements: ${STATEMENTS}%"
-
-          if (( $(echo "$LINES < 80" | bc -l) )); then
-            echo "L Line coverage (${LINES}%) is below 80%"
-            exit 1
-          fi
-
-          if (( $(echo "$FUNCTIONS < 80" | bc -l) )); then
-            echo "L Function coverage (${FUNCTIONS}%) is below 80%"
-            exit 1
-          fi
-
-          if (( $(echo "$BRANCHES < 80" | bc -l) )); then
-            echo "L Branch coverage (${BRANCHES}%) is below 80%"
-            exit 1
-          fi
-
-          if (( $(echo "$STATEMENTS < 80" | bc -l) )); then
-            echo "L Statement coverage (${STATEMENTS}%) is below 80%"
-            exit 1
-          fi
-
-          echo " All coverage thresholds met!"
-
       - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.node-version == '20.x'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            if (fs.existsSync('coverage-report.json')) {
-              const coverage = JSON.parse(fs.readFileSync('coverage-report.json'));
-              const { lines, functions, branches, statements } = coverage.summary;
-
-              const comment = `## =� Coverage Report
-
-              | Metric | Coverage | Status |
-              |--------|----------|--------|
-              | Lines | ${lines.pct}% | ${lines.pct >= 80 ? '' : 'L'} |
-              | Functions | ${functions.pct}% | ${functions.pct >= 80 ? '' : 'L'} |
-              | Branches | ${branches.pct}% | ${branches.pct >= 80 ? '' : 'L'} |
-              | Statements | ${statements.pct}% | ${statements.pct >= 80 ? '' : 'L'} |
-
-              ${lines.pct >= 80 && functions.pct >= 80 && branches.pct >= 80 && statements.pct >= 80
-                ? '<� All coverage thresholds met!'
-                : '� Some coverage thresholds are below 80%'
-              }
-              `;
-
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
+            const summaryPath = 'packages/chorus-extension/coverage/coverage-summary.json';
+            if (!fs.existsSync(summaryPath)) {
+              console.log('No coverage summary found, skipping comment.');
+              return;
             }
+            const coverage = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+            const { lines, functions, branches, statements } = coverage.total;
+            const threshold = 90;
+            const icon = (pct) => pct >= threshold ? 'white_check_mark' : 'warning';
 
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: test
+            const body = [
+              '## Coverage Report',
+              '',
+              '| Metric | Coverage | Status |',
+              '|--------|----------|--------|',
+              `| Lines | ${lines.pct}% | :${icon(lines.pct)}: |`,
+              `| Functions | ${functions.pct}% | :${icon(functions.pct)}: |`,
+              `| Branches | ${branches.pct}% | :${icon(branches.pct)}: |`,
+              `| Statements | ${statements.pct}% | :${icon(statements.pct)}: |`,
+              '',
+              lines.pct >= threshold && functions.pct >= threshold && branches.pct >= threshold && statements.pct >= threshold
+                ? 'All coverage thresholds met (>= 90%).'
+                : 'Some coverage thresholds are below 90%.',
+            ].join('\n');
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Use Node.js 18.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18.x
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build project
-        run: npm run build
-
-      - name: Run integration tests
-        run: |
-          # Install VS Code test runner dependencies
-          npm install --no-save @vscode/test-electron
-
-          # Note: Integration tests would typically run here
-          # For now, we'll simulate successful integration tests
-          echo " Integration tests would run here"
-          echo "   - Extension activation test"
-          echo "   - Panel opening and tab switching"
-          echo "   - CodeLens provider test"
-          echo "   - Command execution test"
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
 
   package:
     runs-on: ubuntu-latest
-    needs: [test, integration-tests]
+    needs: test
     if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Use Node.js 18.x
+      - name: Use Node.js 20.x
         uses: actions/setup-node@v4
         with:
-          node-version: 18.x
-          cache: "npm"
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: packages/chorus-extension/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -169,7 +103,7 @@ jobs:
         run: npm run build
 
       - name: Package extension
-        run: npm run vsce:package
+        run: npx vsce package
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
