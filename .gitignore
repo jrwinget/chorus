@@ -8,7 +8,9 @@ dist/
 *.vsix
 
 # IDE files
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 
 # OS generated files
 .DS_Store
@@ -20,6 +22,7 @@ logs/
 
 # Coverage
 coverage/
+coverage-output.json
 .nyc_output/
 
 # Local database

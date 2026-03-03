@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "positron",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/chorus-extension"],
+      "outFiles": ["${workspaceFolder}/packages/chorus-extension/out/**/*.js"],
+      "preLaunchTask": "npm: build - packages/chorus-extension"
+    }
+  ]
+}

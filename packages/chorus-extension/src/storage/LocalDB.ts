@@ -118,7 +118,13 @@ export class LocalDB implements vscode.Disposable {
 
       console.log(`LocalDB: Loading sql.js library...`);
       // load sql.js library asynchronously (no blocking operations)
-      this.sql = await initSqlJs();
+      // explicit locateFile ensures the WASM binary is found in all host environments
+      // (VS Code, Positron, etc.) regardless of module resolution differences
+      const sqlJsPkgPath = require.resolve('sql.js/package.json');
+      const wasmPath = path.join(path.dirname(sqlJsPkgPath), 'dist', 'sql-wasm.wasm');
+      this.sql = await initSqlJs({
+        locateFile: (): string => wasmPath,
+      });
       console.log(`LocalDB: sql.js library loaded`);
 
       // try to load existing database file, or create new in-memory database
